@@ -1,10 +1,12 @@
-package main
+package handler
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/mohamadafzal06/depository/entity"
 )
 
 type ServerErr struct {
@@ -12,8 +14,8 @@ type ServerErr struct {
 }
 
 func WriteJSON(w http.ResponseWriter, status int, v interface{}) error {
+	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Header().Set("Content-Type", "application/json")
 
 	return json.NewEncoder(w).Encode(v)
 }
@@ -65,7 +67,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) handleGetAccount(w http.ResponseWriter, r *http.Request) error {
-	account := NewAccount("mamreza", "afzal")
+	account := entity.NewAccount("mamreza", "afzal")
 
 	return WriteJSON(w, http.StatusOK, account)
 }
