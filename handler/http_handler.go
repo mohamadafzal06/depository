@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/mohamadafzal06/depository/param"
 	"github.com/mohamadafzal06/depository/service"
@@ -49,9 +52,9 @@ func (h *Handler) Run() {
 	router := http.NewServeMux()
 
 	router.HandleFunc("/account", makeHTTPHandleFunc(h.handleAccount))
-	router.HandleFunc("/account/{number}", makeHTTPHandleFunc(h.handleGetAccount))
-	router.HandleFunc("/account/remove/{number}", makeHTTPHandleFunc(h.handleDeleteAccount))
-	router.HandleFunc("/transfer", makeHTTPHandleFunc(h.handleTransfer))
+	router.HandleFunc("/account/{number}", JWTMiddleware(makeHTTPHandleFunc(h.handleGetAccount), h.service))
+	router.HandleFunc("/account/remove/{number}", JWTMiddleware(makeHTTPHandleFunc(h.handleDeleteAccount), h.service))
+	router.HandleFunc("/transfer", JWTMiddleware(makeHTTPHandleFunc(h.handleTransfer), h.service))
 
 	log.Printf("Handler is running on port: %s\n", h.listenAddr)
 
@@ -91,6 +94,12 @@ func (h *Handler) handleCreateAccount(w http.ResponseWriter, r *http.Request) er
 		return WriteJSON(w, http.StatusInternalServerError, []byte("account creation failed."))
 	}
 
+	tokenString, err := createJWT(&createdAccountResponse)
+	if err != nil {
+		return WriteJSON(w, http.StatusInternalServerError, []byte("authentication failed."))
+	}
+	w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", tokenString))
+
 	return WriteJSON(w, http.StatusOK, createdAccountResponse)
 }
 
@@ -98,14 +107,14 @@ func (h *Handler) handleGetAccount(w http.ResponseWriter, r *http.Request) error
 	if r.Method != http.MethodGet {
 		return fmt.Errorf("invalid method")
 	}
-	vars := mux.Vars(r)
-	nString := vars["number"]
+
 	var req param.GetAccountByNumberRequest
-	n, err := strconv.Atoi(nString)
-	if err != nil {
-		return fmt.Errorf("invalid number given: %w", err)
+	number := getNumber(r)
+	if number != -1 {
+		req.Number = getNumber(r)
+	} else {
+		return WriteJSON(w, http.StatusBadRequest, []byte("the number is not valid"))
 	}
-	req.Number = int64(n)
 
 	response, err := h.service.GetAccountByNumber(r.Context(), req)
 	if err != nil {
@@ -120,16 +129,16 @@ func (h *Handler) handleDeleteAccount(w http.ResponseWriter, r *http.Request) er
 		return fmt.Errorf("invalid method")
 	}
 
-	vars := mux.Vars(r)
-	nString := vars["number"]
 	var req param.DeleteAccountRequest
-	n, err := strconv.Atoi(nString)
-	if err != nil {
-		return fmt.Errorf("invalid number given: %w", err)
-	}
-	req.Number = int64(n)
+	number := getNumber(r)
 
-	err = h.service.DeleteAccount(r.Context(), req)
+	if number != -1 {
+		req.Number = number
+	} else {
+		return WriteJSON(w, http.StatusBadRequest, []byte("the number is not valid"))
+	}
+
+	err := h.service.DeleteAccount(r.Context(), req)
 	if err != nil {
 		return WriteJSON(w, http.StatusInternalServerError, []byte("cannot delete account with this number."))
 	}
@@ -154,4 +163,83 @@ func (h *Handler) handleTransfer(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	return WriteJSON(w, http.StatusOK, response)
+}
+
+func permissioinDenied(w http.ResponseWriter) {
+	WriteJSON(w, http.StatusForbidden, HandlerErr{Error: "permissioin denied"})
+}
+
+func JWTMiddleware(hrFunc http.HandlerFunc, srv *service.Depository) http.HandlerFunc {
+	fmt.Println("calling JWT auth middleware")
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		tokenString := r.Header.Get("x-jwt-token")
+		token, err := validateJWT(tokenString)
+		if err != nil {
+			permissioinDenied(w)
+		}
+
+		if !token.Valid {
+			permissioinDenied(w)
+		}
+
+		var req param.GetAccountByNumberRequest
+		number := getNumber(r)
+		if number == -1 {
+			permissioinDenied(w)
+			return
+		}
+
+		req.Number = number
+
+		account, err := srv.GetAccountByNumber(r.Context(), req)
+		if err != nil {
+			permissioinDenied(w)
+			return
+		}
+
+		claims := token.Claims.(jwt.MapClaims)
+		if account.Number != int64(claims["number"].(float64)) {
+			permissioinDenied(w)
+			return
+		}
+
+		hrFunc(w, r)
+	}
+
+}
+
+func validateJWT(tokenString string) (*jwt.Token, error) {
+	secret := os.Getenv("JWT_SECRET")
+
+	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+		}
+
+		return []byte(secret), nil
+	})
+}
+
+func createJWT(createdAccount *param.CreateAccountResponse) (string, error) {
+	token := jwt.New(jwt.SigningMethodHS256)
+	claims := token.Claims.(jwt.MapClaims)
+	claims["exp"] = time.Now().Add(10 * time.Minute)
+	claims["authorized"] = true
+	claims["number"] = createdAccount.Number
+
+	secret := os.Getenv("JWT_SECRET")
+
+	return token.SignedString([]byte(secret))
+}
+
+func getNumber(r *http.Request) int64 {
+	vars := mux.Vars(r)
+	nString := vars["number"]
+	n, err := strconv.Atoi(nString)
+	if err != nil {
+		return -1
+	}
+	return int64(n)
 }
