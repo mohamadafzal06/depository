@@ -6,11 +6,12 @@ import (
 )
 
 type Account struct {
-	ID        uint64 `json:"id"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Number    int64  `json:"number"`
-	Balance   int64  `json:"balance"`
+	ID        uint64    `json:"id"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	Number    int64     `json:"number"`
+	Balance   int64     `json:"balance"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // TODO: can be replaced with uuid for Account's Number
@@ -30,5 +31,6 @@ func NewAccount(fn, ln string) *Account {
 		FirstName: fn,
 		LastName:  ln,
 		Number:    n,
+		CreatedAt: time.Now().UTC(),
 	}
 }
