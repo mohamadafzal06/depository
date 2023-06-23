@@ -46,6 +46,7 @@ func (pg *Postgres) CreateAccountTable() error {
 	id SERIAL PRIMARY KEY,
 	firstname VARCHAR(50),
 	lastname VARCHAR(50),
+	encrypted_pass VARCHAR(50),
 	number SERIAL UNIQUE,
 	balance, 
 	created_at timestamp
@@ -61,7 +62,10 @@ func (pg *Postgres) CreateAccountTable() error {
 }
 
 func (pg *Postgres) CreateAccount(ctx context.Context, acc *entity.Account) (int64, error) {
-	res, err := pg.db.ExecContext(ctx, "insert into account (firstname, lastname, balance) values($1, $2, $3);", acc.FirstName, acc.LastName, acc.Balance)
+	res, err := pg.db.ExecContext(ctx,
+		"insert into account (firstname, lastname, encrypted_pass, balance) values($1, $2, $3, $4);",
+		acc.FirstName, acc.LastName, acc.EncryptedPassword, acc.Balance)
+
 	if err != nil {
 		return -1, fmt.Errorf("cannot insert this account into db: %w", err)
 	}
@@ -158,6 +162,24 @@ func (pg *Postgres) TransferAmount(ctx context.Context, from, to, amount int64) 
 	if err != nil {
 		tx.Rollback()
 		return err
+	}
+
+	return nil
+}
+
+func (pg *Postgres) AccountAuthenticity(ctx context.Context, number int64, encPass string) error {
+	row := pg.db.QueryRowContext(ctx, "select encrypted_pass from account where number=$1", number)
+	var trulyPass string
+	err := row.Scan(&trulyPass)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("account with this number does not exist: %w", err)
+		}
+		return fmt.Errorf("error while scanning result from db: %w", err)
+	}
+
+	if encPass != trulyPass {
+		return fmt.Errorf("the given pass is not correct: %w", err)
 	}
 
 	return nil

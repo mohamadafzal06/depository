@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
 	"github.com/mohamadafzal06/depository/param"
 	"github.com/mohamadafzal06/depository/service"
@@ -39,6 +36,8 @@ func makeHTTPHandleFunc(f apiFunc) http.HandlerFunc {
 type Handler struct {
 	listenAddr string
 	service    *service.Depository
+	auth       *service.Auth
+	authConfig *service.AuthConfig
 }
 
 func New(lAddr string, srv *service.Depository) *Handler {
@@ -51,10 +50,11 @@ func New(lAddr string, srv *service.Depository) *Handler {
 func (h *Handler) Run() {
 	router := http.NewServeMux()
 
+	router.HandleFunc("/login", makeHTTPHandleFunc(h.handleLogin))
 	router.HandleFunc("/account", makeHTTPHandleFunc(h.handleAccount))
-	router.HandleFunc("/account/{number}", JWTMiddleware(makeHTTPHandleFunc(h.handleGetAccount), h.service))
-	router.HandleFunc("/account/remove/{number}", JWTMiddleware(makeHTTPHandleFunc(h.handleDeleteAccount), h.service))
-	router.HandleFunc("/transfer", JWTMiddleware(makeHTTPHandleFunc(h.handleTransfer), h.service))
+	router.HandleFunc("/account/{number}", JWTMiddleware(makeHTTPHandleFunc(h.handleGetAccount), h.service, h.auth, h.authConfig))
+	router.HandleFunc("/account/remove/{number}", JWTMiddleware(makeHTTPHandleFunc(h.handleDeleteAccount), h.service, h.auth, h.authConfig))
+	router.HandleFunc("/transfer", JWTMiddleware(makeHTTPHandleFunc(h.handleTransfer), h.service, h.auth, h.authConfig))
 
 	log.Printf("Handler is running on port: %s\n", h.listenAddr)
 
@@ -93,12 +93,6 @@ func (h *Handler) handleCreateAccount(w http.ResponseWriter, r *http.Request) er
 	if err != nil {
 		return WriteJSON(w, http.StatusInternalServerError, []byte("account creation failed."))
 	}
-
-	tokenString, err := createJWT(&createdAccountResponse)
-	if err != nil {
-		return WriteJSON(w, http.StatusInternalServerError, []byte("authentication failed."))
-	}
-	w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", tokenString))
 
 	return WriteJSON(w, http.StatusOK, createdAccountResponse)
 }
@@ -165,73 +159,37 @@ func (h *Handler) handleTransfer(w http.ResponseWriter, r *http.Request) error {
 	return WriteJSON(w, http.StatusOK, response)
 }
 
-func permissioinDenied(w http.ResponseWriter) {
-	WriteJSON(w, http.StatusForbidden, HandlerErr{Error: "permissioin denied"})
-}
-
-func JWTMiddleware(hrFunc http.HandlerFunc, srv *service.Depository) http.HandlerFunc {
-	fmt.Println("calling JWT auth middleware")
-
-	return func(w http.ResponseWriter, r *http.Request) {
-		tokenString := r.Header.Get("x-jwt-token")
-		token, err := validateJWT(tokenString)
-		if err != nil {
-			permissioinDenied(w)
-		}
-
-		if !token.Valid {
-			permissioinDenied(w)
-		}
-
-		var req param.GetAccountByNumberRequest
-		number := getNumber(r)
-		if number == -1 {
-			permissioinDenied(w)
-			return
-		}
-
-		req.Number = number
-
-		account, err := srv.GetAccountByNumber(r.Context(), req)
-		if err != nil {
-			permissioinDenied(w)
-			return
-		}
-
-		claims := token.Claims.(jwt.MapClaims)
-		if account.Number != int64(claims["number"].(float64)) {
-			permissioinDenied(w)
-			return
-		}
-
-		hrFunc(w, r)
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return WriteJSON(w, http.StatusBadRequest)
 	}
 
-}
+	var req param.LoginRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		return WriteJSON(w, http.StatusBadRequest)
+	}
 
-func validateJWT(tokenString string) (*jwt.Token, error) {
-	secret := os.Getenv("JWT_SECRET")
+	// checking correctness of password
+	passCheck, err := h.service.CheckPass(r.Context(), req)
+	// TODO: check the response
+	if err != nil {
+		return WriteJSON(w, http.StatusBadRequest)
+	}
+	if passCheck.Truly {
 
-	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+		resp, err := h.auth.CreateAccessToken(req)
+		if err != nil {
+			return WriteJSON(w, http.StatusInternalServerError, []byte("authentication failed."))
 		}
+		w.Header().Set("Authorization", fmt.Sprintf("Bearer %s", resp.TokenString))
 
-		return []byte(secret), nil
-	})
-}
+		return WriteJSON(w, http.StatusOK, resp.Status)
+	}
 
-func createJWT(createdAccount *param.CreateAccountResponse) (string, error) {
-	token := jwt.New(jwt.SigningMethodHS256)
-	claims := token.Claims.(jwt.MapClaims)
-	claims["exp"] = time.Now().Add(10 * time.Minute)
-	claims["authorized"] = true
-	claims["number"] = createdAccount.Number
+	// TODO: check the response
+	return WriteJSON(w, http.StatusBadRequest)
 
-	secret := os.Getenv("JWT_SECRET")
-
-	return token.SignedString([]byte(secret))
 }
 
 func getNumber(r *http.Request) int64 {
