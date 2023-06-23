@@ -11,4 +11,5 @@ type Repository interface {
 	DeleteAccount(ctx context.Context, number int64) error
 	TransferAmount(ctx context.Context, from, to, amount int64) error
 	GetAccountByNumber(ctx context.Context, number int64) (*entity.Account, error)
+	AccountAuthenticity(ctx context.Context, number int64, encPass string) error
 }

@@ -21,13 +21,9 @@ func NewDepository(r repository.Repository) *Depository {
 }
 
 func (s *Depository) CreateAccount(ctx context.Context, req param.CreateAccountRequest) (param.CreateAccountResponse, error) {
-	acc := entity.Account{
-		FirstName: req.FistName,
-		LastName:  req.LastName,
-		Balance:   req.Balance,
-	}
+	acc, err := entity.NewAccount(req.FistName, req.LastName, req.Password, req.Balance)
 
-	number, err := s.repo.CreateAccount(ctx, &acc)
+	number, err := s.repo.CreateAccount(ctx, acc)
 	if err != nil {
 		return param.CreateAccountResponse{}, fmt.Errorf("cannot create this account: %w", err)
 	}
@@ -71,4 +67,14 @@ func (s *Depository) TransferAmount(ctx context.Context, req param.TransferAmoun
 		return param.TransferAmountResponse{Status: param.Unsuccessful}, fmt.Errorf("transfer money failed: %w", err)
 	}
 	return param.TransferAmountResponse{Status: param.Successful}, nil
+}
+
+// TODO: should moved to auth service
+func (s *Depository) CheckPass(ctx context.Context, req param.LoginRequest) (param.PassCheckRespone, error) {
+	err := s.repo.AccountAuthenticity(ctx, req.Number, req.Password)
+	if err != nil {
+		return param.PassCheckRespone{Truly: false}, err
+	}
+
+	return param.PassCheckRespone{Truly: true}, nil
 }
