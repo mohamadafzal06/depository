@@ -8,6 +8,7 @@ import (
 	"log"
 
 	_ "github.com/lib/pq"
+	"github.com/mohamadafzal06/depository/config"
 	"github.com/mohamadafzal06/depository/entity"
 )
 
@@ -19,15 +20,9 @@ type Postgres struct {
 	db *sql.DB
 }
 
-type PostgresConfig struct {
-	username string
-	password string
-	dbAddr   string
-	dbname   string
-}
-
-func NewPostgres(cf PostgresConfig) (*Postgres, error) {
-	connStr := fmt.Sprintf("postgresql://%s:%s@%s/%s?sslmode=disable", cf.username, cf.password, cf.dbAddr, cf.dbname)
+func NewPostgres() (*Postgres, error) {
+	connStr := fmt.Sprintf("postgresql://%s:%s@%s/%s?sslmode=disable",
+		config.DatabaseUser, config.DatabasePass, config.DatabaseAddress, config.DatabaseDBName)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
