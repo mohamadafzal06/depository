@@ -9,8 +9,7 @@ import (
 )
 
 func main() {
-	psConfig := postgres.PostgresConfig{}
-	repo, err := postgres.NewPostgres(psConfig)
+	repo, err := postgres.NewPostgres()
 	if err != nil {
 		log.Fatal(err)
 	}
